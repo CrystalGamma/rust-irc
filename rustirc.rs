@@ -8,12 +8,12 @@ use std::io::TcpStream;
 use std::io::IoResult;
 
 macro_rules! assume(
-    ($e:expr) => (match $e { Some(e) => e, None => fail!("Assumed value did not exist") })
+    ($e:expr) => (match $e { Some(ref mut e) => e, None => unreachable!() })
 )
 
-pub struct Connection<T: Iterator<String> + 'static> {
+pub struct Connection {
 	conn: Box<TcpStream>,
-	names: Option<Box<T>>,
+	names: Option<Box<Iterator<String> + 'static>>,
 	nick: Option<String>
 }
 
@@ -47,15 +47,15 @@ impl NickVerifier for String {
 }
 
 
-impl<T: Iterator<String> + 'static> Connection<T> {
+impl Connection {
 	fn nick_message(&mut self) -> IoResult<()> {
 		self.nick = assume!(self.names).next();
 		assert!(assume!(self.nick).as_slice().is_valid_nick());
 		try!(self.conn.write_str(format!("NICK {}\n", self.nick).as_slice()));
 		Ok(())
 	}
-	pub fn connect(conn: Box<TcpStream>, names: T) -> IoResult<Connection<T>> {
-		let mut irc = Connection {conn: conn, names: Some(box names), nick: None};
+	pub fn connect(conn: Box<TcpStream>, names: Box<Iterator<String> + 'static>) -> IoResult<Connection> {
+		let mut irc = Connection {conn: conn, names: Some(names), nick: None};
 		try!(irc.nick_message());
 		Ok(irc)
 	}
