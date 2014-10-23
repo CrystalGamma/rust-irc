@@ -25,6 +25,8 @@
 
 use std::io::{TcpStream, IoResult, BufferedReader, Writer, IoError, OtherIoError};
 pub use string_tests::StringTests;
+use cmd_parser::IrcLine;
+pub use cmd_parser::IrcEvent;
 mod string_tests;
 
 macro_rules! assume(
@@ -38,32 +40,7 @@ macro_rules! ioassume(
 )
 macro_rules! tryopt( ($e:expr, $default:expr) => (match $e {Some(e)=>e, None=>return $default}))
 
-pub trait IrcLine{
-	fn decode_irc_event<'a>(&'a self) -> Option<IrcEvent<'a>>;
-}
-pub struct IrcEvent<'a> {
-	prefix: &'a str,
-	cmd: &'a str,
-	args: Vec<&'a str>
-}
-impl<'t> IrcLine for &'t str {
-	fn decode_irc_event<'a>(&'a self) -> Option<IrcEvent<'a>> {
-		let line = self.trim_right_chars(|c: char| c == '\r' || c == '\n');
-		let bytes = line.as_bytes();
-		let hasprefix = bytes[0] == 58; // ':'
-		let mut parts = line.splitn(if hasprefix {2} else {1}, |c: char| c == ':');
-		if hasprefix { parts.next(); }
-		let mut segments = tryopt!(parts.next(), None).split(|c: char| c == ' ');
-		let prefix = if hasprefix {tryopt!(segments.next(), None)} else {""};
-		let cmd = tryopt!(segments.next(), None);
-		let mut args: Vec<&str> = segments.filter(|st: &&str|st.len()>0).collect();
-		match parts.next() {
-			Some(x)=>args.push_all([x]),
-			None=>{}
-		};
-		Some(IrcEvent {prefix: prefix, cmd: cmd, args:args})
-	}
-}
+mod cmd_parser;
 
 pub struct IrcReader<T> {
 	read: BufferedReader<T>
