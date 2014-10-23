@@ -20,6 +20,7 @@ pub trait IrcLine{
 	fn decode_irc_event<'a>(&'a self) -> Option<IrcEvent<'a>>;
 }
 pub struct IrcEvent<'a> {
+	pub sender: &'a str,
 	pub prefix: &'a str,
 	pub cmd: &'a str,
 	pub args: Vec<&'a str>
@@ -33,12 +34,15 @@ impl<'t> IrcLine for &'t str {
 		if hasprefix { parts.next(); }
 		let mut segments = tryopt!(parts.next(), None).split(|c: char| c == ' ');
 		let prefix = if hasprefix {tryopt!(segments.next(), None)} else {""};
+		let sender = match prefix.find(|c: char| c=='!') {
+			Some(x) => prefix.slice_to(x),
+			None => prefix};
 		let cmd = tryopt!(segments.next(), None);
 		let mut args: Vec<&str> = segments.filter(|st: &&str|st.len()>0).collect();
 		match parts.next() {
 			Some(x)=>args.push_all([x]),
 			None=>{}
 		};
-		Some(IrcEvent {prefix: prefix, cmd: cmd, args:args})
+		Some(IrcEvent {sender: sender, prefix: prefix, cmd: cmd, args:args})
 	}
 }

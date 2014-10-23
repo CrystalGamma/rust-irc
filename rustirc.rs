@@ -51,15 +51,16 @@ impl CloseWrite for TcpStream {
 	fn close_write(&mut self) -> IoResult<()> { self.close_write() }
 }
 
-pub trait IrcWriter: Clone {
+pub trait IrcWriter: Clone + Send {
 	fn login(&mut self, nick: &str, user_name: &str, real_name: &str) -> IoResult<()>;
 	fn quit(&mut self) -> IoResult<()>;
 	fn join(&mut self, channel: &str) -> IoResult<()>;
 	fn pong(&mut self, data: &str) -> IoResult<()>;
 	fn notice(&mut self, target: &str, text: &str) -> IoResult<()>;
+	fn message(&mut self, target: &str, text: &str) -> IoResult<()>;
 }
 
-impl<T: Writer + CloseWrite + Clone> IrcWriter for T {
+impl<T: Writer + CloseWrite + Clone + Send> IrcWriter for T {
 	fn login(&mut self, nick: &str, user_name: &str, real_name: &str) -> IoResult<()> {
 		let out = format!("NICK {}\r\nUSER {} 8 * :{}\r\n", nick, user_name, real_name);
 		print!("{}",out);
@@ -80,7 +81,15 @@ impl<T: Writer + CloseWrite + Clone> IrcWriter for T {
 	}
 	fn notice(&mut self, target: &str, text: &str) -> IoResult<()> {
 		assert!(text.no_newline() && target.no_newline()); // TODO: make a string test for target lists
-		self.write_str(format!("NOTICE {} :{}\r\n", target, text).as_slice())
+		let out = format!("NOTICE {} :{}\r\n", target, text);
+		print!("{}", out);
+		self.write_str(out.as_slice())
+	}
+	fn message(&mut self, target: &str, text: &str) -> IoResult<()> {
+		assert!(text.no_newline() && target.no_newline()); // TODO: make a string test for target lists
+		let out = format!("PRIVMSG {} :{}\r\n", target, text);
+		print!("{}", out);
+		self.write_str(out.as_slice())
 	}
 }
 
@@ -109,7 +118,7 @@ pub trait IrcEventHandler {
 }
 
 
-impl<IO: std::io::Stream + Clone + CloseWrite, Handler: IrcEventHandler> Connection<IO, Handler> {
+impl<IO: IrcWriter + Reader, Handler: IrcEventHandler> Connection<IO, Handler> {
 	pub fn connect<T: Iterator<String> + 'static>(conn: IO, mut names: T, user_name: String, real_name: String, event_handler: Handler) -> IoResult<Connection<IO, Handler>> {
 		assert!(user_name.is_valid_nick() && real_name.no_newline());
 		let mut irc = Connection {
