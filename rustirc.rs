@@ -57,6 +57,7 @@ pub trait IrcWriter: Clone + Send {
 	fn join(&mut self, channel: &str) -> IoResult<()>;
 	fn pong(&mut self, data: &str) -> IoResult<()>;
 	fn notice(&mut self, target: &str, text: &str) -> IoResult<()>;
+	fn channel_notice(&mut self, target: &str, text: &str) -> IoResult<()>;
 	fn message(&mut self, target: &str, text: &str) -> IoResult<()>;
 }
 
@@ -90,6 +91,13 @@ impl<T: Writer + CloseWrite + Clone + Send> IrcWriter for T {
 		let out = format!("PRIVMSG {} :{}\r\n", target, text);
 		print!("{}", out);
 		self.write_str(out.as_slice())
+	}
+	fn channel_notice(&mut self, target: &str, text: &str) -> IoResult<()> {
+		if cfg!(channel_notice) {
+			self.notice(target, text)
+		} else {
+			self.message(target, text)
+		}
 	}
 }
 
