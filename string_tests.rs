@@ -53,3 +53,14 @@ impl StringTests for String {
 		self.as_slice().no_newline()
 	}
 }
+
+#[test]
+fn test() {
+	assert!("blah".is_valid_nick());
+	assert!(!"Ümläüt".is_valid_nick());
+	assert!(!"no spaces in nicknames".is_valid_nick());
+	assert!(!"no@special-chars.in+nicks".is_valid_nick())
+	assert!("no newline".no_newline());
+	assert!(!"has\nnewline".no_newline());
+	assert!(!"telnet-style newline\r\n".no_newline());
+}
