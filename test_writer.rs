@@ -24,25 +24,25 @@ impl CloseWrite for MemWriter {
 
 #[test]
 fn test_irc_login() {
-	let mut irc = IrcWriter::new(MemWriter::new());
+	let mut irc = MemWriter::new();
 	assert_eq!(irc.login("TestNick", "testuser", "Test Real Name"), Ok(()));
-	assert_eq!(irc.get_inner().get_ref(), b"NICK TestNick\r\nUSER testuser 8 * :Test Real Name\r\n");
+	assert_eq!(irc.get_ref(), b"NICK TestNick\r\nUSER testuser 8 * :Test Real Name\r\n");
 }
 #[test]
 fn test_irc_pong() {
-	let mut irc = IrcWriter::new(MemWriter::new());
+	let mut irc = MemWriter::new();
 	assert_eq!(irc.pong("123456789"), Ok(()));
-	assert_eq!(irc.get_inner().get_ref(), b"PONG :123456789\r\n");
+	assert_eq!(irc.get_ref(), b"PONG :123456789\r\n");
 }
 #[test]
 fn test_irc_join() {
-	let mut irc = IrcWriter::new(MemWriter::new());
+	let mut irc = MemWriter::new();
 	assert_eq!(irc.join("#testchannel"), Ok(()));
-	assert_eq!(irc.get_inner().get_ref(), b"JOIN :#testchannel\r\n");
+	assert_eq!(irc.get_ref(), b"JOIN :#testchannel\r\n");
 }
 #[test]
 fn test_irc_quit() {
-	let mut irc = IrcWriter::new(MemWriter::new());
+	let mut irc = MemWriter::new();
 	assert_eq!(irc.quit(), Ok(()));
-	assert_eq!(irc.get_inner().get_ref(), b"QUIT\r\n");
+	assert_eq!(irc.get_ref(), b"QUIT\r\n");
 }

@@ -17,8 +17,8 @@
 
 #![experimental="rustirc is not yet feature-complete"]
 #![crate_name="rustirc"]
+#![license="GPLv3"]
 #![crate_type="lib"]
-#![crate_type="bin"]
 
 #![feature(macro_rules)]
 
@@ -35,25 +35,12 @@ macro_rules! assume(
 macro_rules! assume_cpy(
     ($e:expr, $msg:expr) => (match $e { Some(e) => e, None => fail!($msg) })
 )
-macro_rules! ioassume(
-    ($e:expr, $msg:expr) => (match $e { Ok(e) => e, Err(msg) => fail!($msg, msg) })
-)
 macro_rules! tryopt( ($e:expr, $default:expr) => (match $e {Some(e)=>e, None=>return $default}))
 
 mod cmd_parser;
 
 pub struct IrcReader<T> {
 	read: BufferedReader<T>
-}
-
-impl<T: Reader> Iterator<String> for IrcReader<T> {
-	fn next(&mut self) -> Option<String> {
-		let st = ioassume!(match self.read.lines().next() {Some(x)=>x, None=>return None}, "could not read event: {}");
-		Some(st)
-	}
-}
-impl<T: Reader> IrcReader<T> {
-	pub fn new(read: T) -> IrcReader<T> { IrcReader {read: BufferedReader::new(read)} }
 }
 
 pub trait CloseWrite {
@@ -64,31 +51,36 @@ impl CloseWrite for TcpStream {
 	fn close_write(&mut self) -> IoResult<()> { self.close_write() }
 }
 
-pub struct IrcWriter<T> {
-	write: T
+pub trait IrcWriter: Clone {
+	fn login(&mut self, nick: &str, user_name: &str, real_name: &str) -> IoResult<()>;
+	fn quit(&mut self) -> IoResult<()>;
+	fn join(&mut self, channel: &str) -> IoResult<()>;
+	fn pong(&mut self, data: &str) -> IoResult<()>;
+	fn notice(&mut self, target: &str, text: &str) -> IoResult<()>;
 }
 
-impl<T: Writer + CloseWrite> IrcWriter<T> {
-	pub fn new(write: T) -> IrcWriter<T> { IrcWriter{write: write} }
-	pub fn get_inner<'a>(&'a self) -> &'a T { &self.write }
-
+impl<T: Writer + CloseWrite + Clone> IrcWriter for T {
 	fn login(&mut self, nick: &str, user_name: &str, real_name: &str) -> IoResult<()> {
 		let out = format!("NICK {}\r\nUSER {} 8 * :{}\r\n", nick, user_name, real_name);
 		print!("{}",out);
-		try!(self.write.write_str(out.as_slice()));
+		try!(self.write_str(out.as_slice()));
 		Ok(())
 	}
 	fn quit(&mut self) -> IoResult<()> {
-		try!(self.write.write_str("QUIT\r\n"));
-		self.write.close_write()
+		try!(self.write_str("QUIT\r\n"));
+		self.close_write()
 	}
 	fn join(&mut self, channel: &str) -> IoResult<()> {
 		assert!(channel.no_newline());
-		self.write.write_str(format!("JOIN :{}\r\n", channel).as_slice())
+		self.write_str(format!("JOIN :{}\r\n", channel).as_slice())
 	}
 	fn pong(&mut self, data: &str) -> IoResult<()> {
 		assert!(data.no_newline());
-		self.write.write_str(format!("PONG :{}\r\n", data).as_slice())
+		self.write_str(format!("PONG :{}\r\n", data).as_slice())
+	}
+	fn notice(&mut self, target: &str, text: &str) -> IoResult<()> {
+		assert!(text.no_newline() && target.no_newline()); // TODO: make a string test for target lists
+		self.write_str(format!("NOTICE {} :{}\r\n", target, text).as_slice())
 	}
 }
 
@@ -96,8 +88,8 @@ impl<T: Writer + CloseWrite> IrcWriter<T> {
 mod test_writer;
 
 pub struct Connection<IO, Handler> {
-	read: IrcReader<IO>,
-	write: IrcWriter<IO>,
+	read: BufferedReader<IO>,
+	write: IO,
 	nick: String,
 	nick_status: NickStatus,
 	user_name: String,
@@ -110,18 +102,19 @@ enum NickStatus {
 	Accepted
 }
 
-pub trait IrcEventHandler<T> {
-	fn on_registered(&mut self, &mut IrcWriter<T>) -> IoResult<()> {Ok(())}
-	fn on_privmsg<'a>(&mut self, text: &str, &IrcEvent<'a>, &mut IrcWriter<T>) -> IoResult<()> {Ok(())}
+#[allow(unused_variable)]
+pub trait IrcEventHandler {
+	fn on_registered<W: IrcWriter>(&mut self, &mut W) -> IoResult<()> {Ok(())}
+	fn on_privmsg<'a, W: IrcWriter>(&mut self, text: &str, &IrcEvent<'a>, &mut W) -> IoResult<()> {Ok(())}
 }
 
 
-impl<IO: std::io::Stream + Clone + CloseWrite, Handler: IrcEventHandler<IO>> Connection<IO, Handler> {
+impl<IO: std::io::Stream + Clone + CloseWrite, Handler: IrcEventHandler> Connection<IO, Handler> {
 	pub fn connect<T: Iterator<String> + 'static>(conn: IO, mut names: T, user_name: String, real_name: String, event_handler: Handler) -> IoResult<Connection<IO, Handler>> {
 		assert!(user_name.is_valid_nick() && real_name.no_newline());
 		let mut irc = Connection {
-			read: IrcReader::new(conn.clone()),
-			write: IrcWriter::new(conn),
+			read: BufferedReader::new(conn.clone()),
+			write: conn,
 			nick: match names.next() {Some(x)=>x, None=>fail!("nick name generator did not generate enough nicks")},
 			nick_status: Registering(box names),
 			user_name: user_name,
@@ -133,18 +126,18 @@ impl<IO: std::io::Stream + Clone + CloseWrite, Handler: IrcEventHandler<IO>> Con
 	}
 	
 	pub fn eventloop(&mut self) -> IoResult<()> {
-		//let mut tries = 5u;
-		for event in self.read {
+		for line in self.read.lines() {
+			let event = try!(line);
 			let slice = event.as_slice();
 			let ev = tryopt!(slice.decode_irc_event(), Err(IoError{kind: OtherIoError, desc: "malformed IRC event received", detail: None}));
-			println!("{}  prefix:{}\n  command: {}\n  args:{}", event, ev.prefix, ev.cmd, ev.args);
+// 			println!("{}  prefix:{}\n  command: {}\n  args:{}", event, ev.prefix, ev.cmd, ev.args);
 			match ev.cmd {
 			"PRIVMSG" => {
 				if ev.args.len() != 2 {
 					return Err(IoError{kind: OtherIoError, desc: "malformed PRIVMSG command received", detail: None})
 				}
 				let text = match ev.args.last() {None => unreachable!(), Some(x) => x};
-				println!("message recieved: {}", text);
+				println!("message received: {}", text);
 				try!(self.event_handler.on_privmsg(*text, &ev, &mut self.write));
 			},
 			"PING" => {
@@ -171,45 +164,6 @@ impl<IO: std::io::Stream + Clone + CloseWrite, Handler: IrcEventHandler<IO>> Con
 		}
 		Ok(())
 	}
-}
-
-pub struct NickGenerator {
-	basename: &'static str,
-	attempt: uint
-}
-
-impl Iterator<String> for NickGenerator {
-	fn next(&mut self) -> Option<String> {
-		self.attempt += 1;
-		Some(if self.attempt > 1 {
-			format!("{}{}", self.basename, self.attempt)
-		} else {
-			self.basename.to_string()
-		})
-	}
-}
-
-struct Bot;
-
-impl IrcEventHandler<TcpStream> for Bot {
-	fn on_registered(&mut self, write: &mut IrcWriter<TcpStream>) -> IoResult<()> {
-		try!(write.join("#Deathmic"));
-		Ok(())
-	}
-	fn on_privmsg<'a>(&mut self, text: &str, ev: &IrcEvent<'a>, write: &mut IrcWriter<TcpStream>) -> IoResult<()> {
-		if text == "!kill" {
-			try!(write.quit());
-		};
-		Ok(())
-	}
-		
-}
-
-pub fn main() {
-	let mut conn = ioassume!(Connection::connect(
-		ioassume!(TcpStream::connect("irc.quakenet.org", 6667), "TCP Connection failed: {}"),
-		NickGenerator {basename: "CrystalGBot", attempt:0},
-		"CrystalGBot".to_string(),
-		"CrystalGamma experimental chat bot implemented in Rust".to_string(), Bot), "IRC connection failed: {}");
-	ioassume!(conn.eventloop(),"main loop failed: {}");
+	
+	pub fn get_parallel_writer(&self) -> IO { self.write.clone() }
 }
