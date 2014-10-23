@@ -1,3 +1,20 @@
+/*
+    This file is part of rust-irc - a Rust Library for connecting to IRC servers
+    Copyright (C) 2014 Jona Stubbe
+
+    rust-irc is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    rust-irc is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with rust-irc.  If not, see <http://www.gnu.org/licenses/>.*/
+
 #![experimental="rustirc is not yet feature-complete"]
 #![crate_name="rustirc"]
 #![crate_type="lib"]
@@ -7,7 +24,7 @@
 
 
 use std::io::{TcpStream, IoResult, BufferedReader, Writer, IoError, OtherIoError};
-use string_tests::StringTests;
+pub use string_tests::StringTests;
 mod string_tests;
 
 macro_rules! assume(
@@ -47,11 +64,6 @@ impl<'t> IrcLine for &'t str {
 		Some(IrcEvent {prefix: prefix, cmd: cmd, args:args})
 	}
 }
-/*impl IrcLine for String {
-	fn decode_irc_event<'a>(&'a self) -> Option<IrcEvent<'a>> {
-		self.as_slice().decode_irc_event()
-	}
-}*/
 
 struct IrcReader<T> {
 	read: BufferedReader<T>
@@ -81,7 +93,6 @@ struct IrcWriter<T> {
 
 impl<T: Writer + CloseWrite> IrcWriter<T> {
 	pub fn new(write: T) -> IrcWriter<T> { IrcWriter{write: write} }
-//	pub fn get_inner(&self) -> &T { &self.write }
 	fn nick_message(&mut self, nick: &str, user_name: &str, real_name: &str) -> IoResult<()> {
 		let out = format!("NICK {}\r\nUSER {} 8 * :{}\r\n", nick, user_name, real_name);
 		print!("{}",out);
@@ -135,11 +146,6 @@ impl Connection {
 	pub fn eventloop(&mut self) -> IoResult<()> {
 		//let mut tries = 5u;
 		for event in self.read {
-			/*match self.nick_status {
-				Registering(_) => {
-					try!(self.write.nick_message(self.nick.as_slice(), self.user_name.as_slice(), self.real_name.as_slice()));
-				},
-				Accepted =>{}};*/
 			let slice = event.as_slice();
 			let ev = tryopt!(slice.decode_irc_event(), Err(IoError{kind: OtherIoError, desc: "malformed IRC event received", detail: None}));
 			println!("{}  prefix:{}\n  command: {}\n  args:{}", event, ev.prefix, ev.cmd, ev.args);
