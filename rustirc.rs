@@ -23,7 +23,7 @@
 #![feature(macro_rules)]
 
 
-use std::io::{TcpStream, IoResult, BufferedReader, Writer, IoError, OtherIoError};
+use std::io::{TcpStream, IoResult, Buffer, Writer, IoError, OtherIoError};
 pub use string_tests::StringTests;
 use cmd_parser::IrcLine;
 pub use cmd_parser::IrcEvent;
@@ -38,10 +38,6 @@ macro_rules! assume_cpy(
 macro_rules! tryopt( ($e:expr, $default:expr) => (match $e {Some(e)=>e, None=>return $default}))
 
 mod cmd_parser;
-
-pub struct IrcReader<T> {
-	read: BufferedReader<T>
-}
 
 pub trait CloseWrite {
 	fn close_write(&mut self) -> IoResult<()>;
@@ -104,9 +100,9 @@ impl<T: Writer + CloseWrite + Clone + Send> IrcWriter for T {
 #[cfg(test)]
 mod test_writer;
 
-pub struct Connection<IO, Handler> {
-	read: BufferedReader<IO>,
-	write: IO,
+pub struct Connection<In, Out, Handler> {
+	read: In,
+	write: Out,
 	nick: String,
 	nick_status: NickStatus,
 	user_name: String,
@@ -122,16 +118,42 @@ enum NickStatus {
 #[allow(unused_variable)]
 pub trait IrcEventHandler {
 	fn on_registered<W: IrcWriter>(&mut self, &mut W) -> IoResult<()> {Ok(())}
-	fn on_privmsg<'a, W: IrcWriter>(&mut self, text: &str, &IrcEvent<'a>, &mut W) -> IoResult<()> {Ok(())}
+	fn on_privmsg<'a, W: IrcWriter>(&mut self, text: &str, ev: &IrcEvent<'a>, write: &mut W) -> IoResult<()> {Ok(())}
+}
+
+pub struct LinesTolerant<'a, T: 'a> {
+	read: &'a mut T
+}
+
+impl<'a, T: TolerantLineReader> Iterator<IoResult<String>> for LinesTolerant<'a, T> {
+	fn next(&mut self) -> Option<IoResult<String>> {
+		self.read.read_line_tolerant()
+	}
+}
+
+pub trait TolerantLineReader {
+	fn read_line_tolerant(&mut self) -> Option<IoResult<String>>;
+	fn lines_tolerant<'a>(&'a mut self) -> LinesTolerant<'a, Self> {
+		LinesTolerant {read: self}
+	}
+}
+
+impl<T: Buffer> TolerantLineReader for T {
+	fn read_line_tolerant(&mut self) -> Option<IoResult<String>> {
+		Some(Ok(String::from_utf8_lossy(match self.read_until(b'\n') {
+			Ok(x) => x,
+			Err(e) => return Some(Err(e))
+		}.as_slice()).into_string()))
+	}
 }
 
 
-impl<IO: IrcWriter + Reader, Handler: IrcEventHandler> Connection<IO, Handler> {
-	pub fn connect<T: Iterator<String> + 'static>(conn: IO, mut names: T, user_name: String, real_name: String, event_handler: Handler) -> IoResult<Connection<IO, Handler>> {
+impl<In: Buffer, Out: IrcWriter, Handler: IrcEventHandler> Connection<In, Out, Handler> {
+	pub fn connect<T: Iterator<String> + 'static>(read: In, write: Out, mut names: T, user_name: String, real_name: String, event_handler: Handler) -> IoResult<Connection<In, Out, Handler>> {
 		assert!(user_name.is_valid_nick() && real_name.no_newline());
 		let mut irc = Connection {
-			read: BufferedReader::new(conn.clone()),
-			write: conn,
+			read: read,
+			write: write,
 			nick: match names.next() {Some(x)=>x, None=>fail!("nick name generator did not generate enough nicks")},
 			nick_status: Registering(box names),
 			user_name: user_name,
@@ -143,11 +165,20 @@ impl<IO: IrcWriter + Reader, Handler: IrcEventHandler> Connection<IO, Handler> {
 	}
 	
 	pub fn eventloop(&mut self) -> IoResult<()> {
-		for line in self.read.lines() {
-			let event = try!(line);
+		for line in self.read.lines_tolerant() {
+			if cfg!(debug) {
+				print!("{}",line);
+			}
+			let event = match line {
+				Ok(x) => x,
+				Err(ref e) if e.kind == std::io::EndOfFile => return Ok(()),
+				Err(e) => return Err(e)
+			};
 			let slice = event.as_slice();
 			let ev = tryopt!(slice.decode_irc_event(), Err(IoError{kind: OtherIoError, desc: "malformed IRC event received", detail: None}));
-// 			println!("{}  prefix:{}\n  command: {}\n  args:{}", event, ev.prefix, ev.cmd, ev.args);
+			if cfg!(debug_verbose) {
+				println!("prefix:{}\n  command: {}\n  args:{}", ev.prefix, ev.cmd, ev.args);
+			}
 			match ev.cmd {
 			"PRIVMSG" => {
 				if ev.args.len() != 2 {
@@ -179,8 +210,6 @@ impl<IO: IrcWriter + Reader, Handler: IrcEventHandler> Connection<IO, Handler> {
 			_ => {}
 			}
 		}
-		Ok(())
+		unreachable!();
 	}
-	
-	pub fn get_parallel_writer(&self) -> IO { self.write.clone() }
 }

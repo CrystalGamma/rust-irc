@@ -22,7 +22,6 @@ pub trait StringTests {
 
 impl<'a> StringTests for &'a str {
 	fn is_valid_nick(&self) -> bool {
-		println!("Nickname test for: {}", self);
 		let mut iter = self.bytes();
 		let b = iter.next();
 		match  b {
@@ -40,7 +39,6 @@ impl<'a> StringTests for &'a str {
 	}
 	
 	fn no_newline(&self) -> bool {
-		println!("No newline test for: {}", self);
 		!self.chars().any(|c| c=='\r' || c=='\n')
 	}
 }
